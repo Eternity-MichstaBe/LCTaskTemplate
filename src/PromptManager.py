@@ -1,20 +1,8 @@
-"""
-提示词统一管理
-"""
-
-class PromptManager:
-    """提示词管理器"""
+class SystemPromptManager:
+    """系统提示词管理器"""
 
     @staticmethod
-    def get_task_prompt() -> str:
+    def get_system_prompt() -> str:
         return """
-            任务描述
+            系统提示词
         """
-
-    @staticmethod
-    def get_task_validator_prompt() -> str:
-        return """
-            验证逻辑设置
-        """
-
-    

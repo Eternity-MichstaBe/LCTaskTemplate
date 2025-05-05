@@ -1,7 +1,7 @@
 import os
 import sys
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
@@ -12,7 +12,7 @@ from functools import reduce
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.LLMConfig import LLMConfig
+from src.LLMConfig import LLMConfig, get_llm_configs, deepseek_api_key, deepseek_api_base
 from src.LLMChainBuilder import LLMChainBuilder
 
 
@@ -61,3 +61,18 @@ class BaseLLM:
         else:
             inputs["chat_history"] = "无历史对话"
         return inputs
+
+
+llmconfig = get_llm_configs(
+    model_name="gpt-4o",
+    temperature=0.2,
+    system_prompt="你是一个AI助手，请根据用户的问题给出回答。",
+    output_parser=StrOutputParser()
+)
+
+llm = BaseLLM(llmconfig)
+
+result = llm.query({"question": "你好"})
+print(result)
+
+

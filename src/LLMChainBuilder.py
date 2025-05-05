@@ -46,7 +46,7 @@ class LLMChainBuilder:
             sequence=sequence
         )
 
-        if config.format is not None:
-            return prompt | chat_model | config.format
+        if config.output_parser is not None:
+            return prompt | chat_model | config.output_parser
         
         return prompt | chat_model

@@ -33,7 +33,7 @@ class LLMConfig:
     examples: List[Tuple[str, str]] = None
     local: bool = False
     is_memory: bool = False
-    format: output_parsers = None
+    output_parser: output_parsers = None
 
 
 def get_llm_configs(**kwargs) -> LLMConfig:
@@ -47,5 +47,5 @@ def get_llm_configs(**kwargs) -> LLMConfig:
         examples=kwargs.get("examples", []),
         local=kwargs.get("local", False),
         is_memory=kwargs.get("is_memory", False),
-        format=kwargs.get("format", None)
+        output_parser=kwargs.get("output_parser", None)
     )
