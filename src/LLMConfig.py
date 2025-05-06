@@ -2,7 +2,7 @@ import configparser
 import os
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
-from langchain_core import output_parsers
+from langchain_core.output_parsers import BaseOutputParser
 
 
 # 获取当前文件所在目录的绝对路径
@@ -32,20 +32,18 @@ class LLMConfig:
     system_prompt: str = ""
     examples: List[Tuple[str, str]] = None
     local: bool = False
-    is_memory: bool = False
-    output_parser: output_parsers = None
+    output_parser: BaseOutputParser = None
 
 
 def get_llm_configs(**kwargs) -> LLMConfig:
     """获取LLM配置"""
     return LLMConfig(
-        model_name=kwargs.get("model_name", "gpt-4o-mini"),
+        model_name=kwargs.get("model_name", "gpt-4o"),
         temperature=kwargs.get("temperature", 0.2),
         api_key=kwargs.get("api_key", chatgpt_api_key),
         api_base=kwargs.get("api_base", chatgpt_api_base),
         system_prompt=kwargs.get("system_prompt", ""),
         examples=kwargs.get("examples", []),
         local=kwargs.get("local", False),
-        is_memory=kwargs.get("is_memory", False),
         output_parser=kwargs.get("output_parser", None)
     )

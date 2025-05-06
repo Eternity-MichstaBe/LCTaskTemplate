@@ -1,8 +1,7 @@
 import os
 import sys
-from functools import reduce
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from typing import Optional
+from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
@@ -34,19 +33,58 @@ class LLMChainBuilder:
             )
         except Exception as e:
             raise RuntimeError(f"Failed to initialize chat model: {str(e)}")
-
-    def create_chain(self, config: LLMConfig, sequence: str = None) -> RunnableParallel:
-        """基于configs创建基础处理链"""
+    
+    def _create_chain(self, config: LLMConfig, prompt) -> RunnableParallel:
+        """创建通用处理链"""
         chat_model = self._init_chat_model(config)
-        prompt = PromptBuilder.create_basic_template(
-            system_prompt=config.system_prompt,
-            model_name=config.model_name,
-            examples=config.examples,
-            is_memory=config.is_memory,
-            sequence=sequence
-        )
-
-        if config.output_parser is not None:
-            return prompt | chat_model | config.output_parser
+        output_parser = config.output_parser or StrOutputParser()
+        return prompt | chat_model | output_parser
         
-        return prompt | chat_model
+    def create_prompt_chain(self, config: LLMConfig) -> RunnableParallel:
+        """创建基础提示处理链"""
+        prompt = PromptBuilder.create_prompt_template(
+            system_prompt=config.system_prompt
+        )
+        return self._create_chain(config, prompt)
+
+    def create_chat_chain(self, config: LLMConfig) -> RunnableParallel:
+        """创建聊天提示处理链"""
+        prompt = PromptBuilder.create_chat_prompt_template(
+            system_prompt=config.system_prompt,
+            examples=config.examples
+        )
+        return self._create_chain(config, prompt)
+    
+    def create_few_shot_prompt_chain(self, config: LLMConfig) -> RunnableParallel:
+        """创建少样本提示处理链"""
+        prompt = PromptBuilder.create_few_shot_prompt_template(
+            system_prompt=config.system_prompt,
+            examples=config.examples
+        )
+        return self._create_chain(config, prompt)
+    
+    def create_few_shot_prompt_chain_with_selector(self, config: LLMConfig, example_num: int) -> RunnableParallel:
+        """创建带选择器的少样本提示处理链"""
+        prompt = PromptBuilder.create_few_shot_prompt_template_with_selector(
+            system_prompt=config.system_prompt,
+            examples=config.examples,
+            example_num=example_num
+        )
+        return self._create_chain(config, prompt)
+    
+    def create_few_shot_chat_chain(self, config: LLMConfig) -> RunnableParallel:
+        """创建少样本聊天处理链"""
+        prompt = PromptBuilder.create_few_shot_chat_prompt_template(
+            system_prompt=config.system_prompt,
+            examples=config.examples
+        )
+        return self._create_chain(config, prompt)
+    
+    def create_few_shot_chat_chain_with_selector(self, config: LLMConfig, example_num: int) -> RunnableParallel:
+        """创建带选择器的少样本聊天处理链"""
+        prompt = PromptBuilder.create_few_shot_chat_prompt_template_with_selector(
+            system_prompt=config.system_prompt,
+            examples=config.examples,
+            example_num=example_num
+        )
+        return self._create_chain(config, prompt)
