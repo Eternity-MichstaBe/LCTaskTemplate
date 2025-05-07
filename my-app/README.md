@@ -1,4 +1,4 @@
-# myApp
+# my-app
 
 ## Installation
 
