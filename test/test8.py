@@ -7,6 +7,8 @@ import sys
 from langchain_core.tools import Tool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.globals import set_debug, set_verbose
+import httpx
+import base64
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -49,7 +51,7 @@ def search_tool(query: str) -> str:
 # 初始化Agent
 llm_agent_builder = LLMAgentBuilder(
     get_llm_configs(
-        system_prompt=SystemPromptManager.get_agent_system_prompt(),
+        system_prompt=SystemPromptManager.get_agent_multimodal_system_prompt(),
         agent=True
     )
 )
@@ -59,12 +61,12 @@ tools = [
     Tool.from_function(
         name="calculator",
         func=calculator_tool,
-        description="用于数学计算的工具，输入应为字符串形式的数学表达式"
+        description="用于数学计算的工具，输入应为字符串形式的数学表达式，调用工具对应的方法calculator_tool获取工具输出"
     ),
     Tool.from_function(
         name="search_engine",
         func=search_tool,
-        description="用于在网页中搜索获取实时信息，输入应为字符串形式的问题或关键字"
+        description="用于在网页中搜索获取实时信息，输入应为字符串形式的问题或关键字，调用工具对应的方法search_tool获取工具输出"
     )
 ]
 
@@ -75,9 +77,12 @@ llm_agent_builder.add_tools(tools)
 # set_debug(True)
 
 # 创建 Agent
-agent_executor = llm_agent_builder.create_agent_executor(verbose=True)
+agent_executor = llm_agent_builder.create_agent_multimodal_executor(verbose=True)
 
 # 执行查询
-query = "2025年NBA季后赛都有哪些队伍，请预测下哪一支队伍最有可能夺冠"
+query = "图片中展示的是什么，请给我搜索一些与其相关的最新的新闻信息"
+image_url = "https://th.bing.com/th/id/R.65363320e5d8926fe1076d1890b85729?rik=mu77sO7cE0%2bBMg&riu=http%3a%2f%2fwww.baobeita.com%2fupload%2fimage%2fproduct%2f201412%2f10116104%2fc9e4becf-7ebb-4ff4-92c4-52be0efd428d-large.jpg&ehk=nCmDTpwGCetptQ4ZmKJIdfE1Ks46czlBx8r66tsdBM4%3d&risl=&pid=ImgRaw&r=0"
+image_data = base64.b64encode(httpx.get(image_url).content).decode("utf-8")
+
 tools_desc = llm_agent_builder.get_tools_description()
-print(agent_executor.invoke({"tools": tools_desc, "question": query})['output'])
+print(agent_executor.invoke({"tools": tools_desc, "question": query, "image_data": image_data})['output'])
