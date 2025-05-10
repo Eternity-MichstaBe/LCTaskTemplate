@@ -1,27 +1,34 @@
 """
-记忆存储
+多模态agent测试
 """
 
 import os
 import sys
-import asyncio
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.tools import Tool, StructuredTool
+from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain.globals import set_debug, set_verbose
+import httpx
+import base64
+import os
+import sys
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.runnables import ConfigurableFieldSpec
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import Tool
 from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_community.chat_message_histories import RedisChatMessageHistory
+from langchain_core.messages import HumanMessage 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.LLMChainBuilder import LLMChainBuilder
 from src.LLMConfig import get_llm_configs
-from src.LLMAgentBuilder import LLMAgentBuilder
 from src.PromptManager import SystemPromptManager
-from example.examples import examples
+from src.LLMAgentBuilder import LLMAgentBuilder
 
-# 定义工具函数
+# 启用 LangChain 追踪
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = "Test"
+
+
 def calculator_tool(expression: str) -> str:
     """计算器工具"""
     try:
@@ -49,97 +56,50 @@ def search_tool(query: str) -> str:
         return "搜索结果:\n" + "\n".join(formatted_results)
     except Exception as e:
         return f"搜索出错: {str(e)}"
-
-# 配置LLM - 普通聊天模式
-llmconfig = get_llm_configs(
-    examples=examples,
-    system_prompt="你是一个AI助手，请根据用户的问题给出回答。",
-    output_parser=StrOutputParser(),
-    memory=True  # 启用记忆功能
+    
+# 初始化Agent
+llm_agent_builder = LLMAgentBuilder(
+    get_llm_configs(
+        system_prompt=SystemPromptManager.get_agent_system_prompt(),
+        agent=True,
+        memory=True
+    )
 )
-
-# 配置LLM - Agent模式
-agent_config = get_llm_configs(
-    system_prompt=SystemPromptManager.get_agent_system_prompt(),
-    agent=True,
-    memory=True  # 启用记忆功能
-)
-
-# 创建聊天链
-chat_chain = LLMChainBuilder().create_chat_chain(llmconfig)
-
-# 创建Agent构建器
-llm_agent_builder = LLMAgentBuilder(agent_config)
-
+    
 # 定义工具列表
 tools = [
     Tool.from_function(
         name="calculator",
         func=calculator_tool,
-        description="用于数学计算的工具，输入应为字符串形式的数学表达式"
+        description="用于数学计算的工具，输入应为字符串形式的数学表达式，调用工具对应的方法calculator_tool获取工具输出"
     ),
     Tool.from_function(
         name="search_engine",
         func=search_tool,
-        description="用于搜索信息的工具，输入应为字符串形式的问题或关键字"
+        description="用于在网页中搜索获取实时信息，输入应为字符串形式的问题或关键字，调用工具对应的方法search_tool获取工具输出"
     )
 ]
 
 # 添加工具
 llm_agent_builder.add_tools(tools)
 
-# 创建Agent执行器
-agent_executor = llm_agent_builder.create_agent_executor(verbose=True)
+# set_verbose(True)
+# set_debug(True)
 
-# 使用字典存储会话历史
-chat_history = {}
-agent_history = {}
+# 创建 Agent
+agent_executor = llm_agent_builder.create_multimodal_agent_executor(verbose=True)
+tools_desc = llm_agent_builder.get_tools_description()
 
-def get_chat_history(user_id: str, session_id: str) -> BaseChatMessageHistory:
-    """获取或创建聊天会话历史"""
-    session_key = (user_id, session_id)
-    if session_key not in chat_history:
-        chat_history[session_key] = ChatMessageHistory()
-    return chat_history[session_key]
+REDIS_URL = "redis://localhost:6379/0"
 
-def get_agent_history(user_id: str, session_id: str) -> BaseChatMessageHistory:
+def get_agent_history(user_id: str, session_id: str) -> RedisChatMessageHistory:
     """获取或创建Agent会话历史"""
-    session_key = (user_id, session_id)
-    if session_key not in agent_history:
-        agent_history[session_key] = ChatMessageHistory()
-    return agent_history[session_key]
+    return RedisChatMessageHistory(session_id=user_id + "-" + session_id, url=REDIS_URL)
 
-# 创建带有消息历史的可运行对象 - 普通聊天
-chat_with_history = RunnableWithMessageHistory(
-    chat_chain,
-    get_chat_history,
-    input_messages_key="question",
-    history_messages_key="history",
-    history_factory_config=[
-        ConfigurableFieldSpec(
-            id="user_id",
-            annotation=str,
-            name="User ID",
-            description="用户唯一标识",
-            default="",
-            is_shared=True
-        ),
-        ConfigurableFieldSpec(
-            id="session_id",
-            annotation=str,
-            name="Session ID",
-            description="会话唯一标识",
-            default="",
-            is_shared=True
-        )
-    ]
-)
-
-# 创建带有消息历史的可运行对象 - Agent
 agent_with_history = RunnableWithMessageHistory(
     agent_executor,
     get_agent_history,
-    input_messages_key="question",
+    input_messages_key="question", 
     history_messages_key="history",
     history_factory_config=[
         ConfigurableFieldSpec(
@@ -161,53 +121,19 @@ agent_with_history = RunnableWithMessageHistory(
     ]
 )
 
-async def async_stream_chat_session():
-    """异步流式聊天会话"""
-    print("欢迎使用AI聊天助手（异步流式版本），输入'退出'结束对话")
-    print("输入'agent模式'切换到Agent模式，输入'聊天模式'切换到普通聊天模式")
-    
-    user_id = "user123"
-    session_id = "session456"
-    
-    # 默认使用普通聊天模式
-    is_agent_mode = False
-    
-    while True:
-        user_input = input("\n用户: ")
-        if user_input.lower() in ['退出', 'exit', 'quit']:
-            print("感谢使用，再见！")
-            break
-        
-        if user_input.lower() == 'agent模式':
-            is_agent_mode = True
-            print("已切换到Agent模式，可以使用工具功能")
-            continue
-            
-        if user_input.lower() == '聊天模式':
-            is_agent_mode = False
-            print("已切换到普通聊天模式")
-            continue
-        
-        print("\nAI助手: ", end="", flush=True)
-        
-        if is_agent_mode:
-            # 使用Agent模式
-            tools_desc = llm_agent_builder.get_tools_description()
-            response = await agent_with_history.ainvoke(
-                {"tools": tools_desc, "question": user_input},
-                config={"configurable": {"user_id": user_id, "session_id": session_id}}
-            )
-            print(response['output'])
-        else:
-            # 使用普通聊天模式
-            async for chunk in chat_with_history.astream(
-                {"question": user_input},
-                config={"configurable": {"user_id": user_id, "session_id": session_id}}
-            ):
-                print(chunk, end="", flush=True)
+# 读取图像并编码为 base64
+def encode_image_to_base64(image_path):
+    with open(image_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
 
-        print("\n历史记录1:\n", chat_history)
-        print("\n历史记录2:\n", agent_history)
+image_url_ = "https://th.bing.com/th/id/OIP.koy6VQmYMo9tMjDWe9xvQwHaE8?rs=1&pid=ImgDetMain"
+image_data_ = base64.b64encode(httpx.get(image_url_).content).decode("utf-8")
 
+res = agent_with_history.invoke(
+    {"tools": tools_desc, "question": "请判断这张图片里是什么，然后去搜索更多最新的信息返回给我，注意按照输出模板的格式返回", "image_data": image_data_},
+    config={
+        "configurable": {"user_id": "zby", "session_id": "session_1"}
+    }
+)
 
-asyncio.run(async_stream_chat_session())
+print(res['output'])
