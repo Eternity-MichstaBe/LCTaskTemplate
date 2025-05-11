@@ -146,14 +146,15 @@ if user_query:
     st.session_state.messages.append({"role": "user", "content": user_query})
     st.chat_message("user").write(user_query)
 
-    with st.chat_message("assistant"):
-        # 创建streamlist回调处理器
-        st_cb = StreamlitCallbackHandler(st.container())
-        # agent执行过程日志回调显示在streamlist Container（如思考，选择工具，执行查询、观察结果等）
-        config = {"callbacks": [st_cb]}
-        # 执行Agent并获取响应
-        response = agent_executor.invoke({"input": user_query}, config=config)
-        # 添加助手消息到session_state
-        st.session_state.messages.append({"role": "assistant", "content": response["output"]})
-        # 显示助手响应
-        st.write(response["output"])
+    # 创建streamlist回调处理器
+    st_cb = StreamlitCallbackHandler(st.container())
+    # agent执行过程日志回调显示在streamlist Container（如思考，选择工具，执行查询、观察结果等）
+    config = {"callbacks": [st_cb]}
+    # 执行Agent并获取响应
+    response = agent_executor.invoke({"input": user_query}, config=config)
+    # 添加助手消息到session_state
+    st.session_state.messages.append({"role": "assistant", "content": response["output"]})
+    # 显示助手响应
+    st.chat_message("assistant").write(response["output"])
+    st.write(response["output"])
+
