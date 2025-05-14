@@ -6,6 +6,15 @@ from redis import Redis as RedisClient
 import time
 import os
 from typing import Optional, List, Union, Dict, Any
+from langchain.storage import LocalFileStore
+from langchain.embeddings import CacheBackedEmbeddings
+from langchain.retrievers.document_compressors import EmbeddingsFilter
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain_community.document_transformers import EmbeddingsRedundantFilter
+from langchain.retrievers.document_compressors import DocumentCompressorPipeline
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
+from langchain.schema import Document
 
 class VectorDBManager:
     """向量数据库管理器，用于管理Redis向量数据库的文档加载、检索和删除操作"""
@@ -19,8 +28,20 @@ class VectorDBManager:
             embedding_model: 嵌入模型，默认使用OpenAIEmbeddings
         """
         self.redis_url = redis_url
-        self.redis_client = RedisClient.from_url(redis_url, decode_responses=True)
-        self.embeddings = embedding_model or OpenAIEmbeddings()
+        self.redis_client = RedisClient.from_url(redis_url, decode_responses=False)
+        self.base_embeddings = embedding_model or OpenAIEmbeddings()
+        
+        # 使用绝对路径创建缓存目录
+        cache_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache"))
+        # 确保缓存目录存在
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        self.store = LocalFileStore(cache_dir)
+        self.embeddings = CacheBackedEmbeddings.from_bytes_store(
+            self.base_embeddings, 
+            self.store, 
+            namespace=self.base_embeddings.model
+        )
 
     def _is_schema_exist(self, index_name: str) -> bool:
         """检查索引schema是否存在"""
@@ -172,14 +193,16 @@ class VectorDBManager:
         except Exception as e:
             raise RuntimeError(f"追加文档到向量数据库失败: {str(e)}")
     
-    def get_retriever(self, index_name: str, k: int = 5):
+    def get_retriever(self, index_name: str, k: int = 3, similarity_threshold: float = 0.75, use_ensemble: bool = False):
         """
         获取向量检索器
         
         Args:
             index_name (str): 索引名称
             k (int): 返回的文档数量
-            
+            similarity_threshold (float): 相似性阈值
+            use_ensemble (bool): 是否使用BM25和向量检索的组合方式
+
         Returns:
             Retriever: 向量检索器
             
@@ -189,6 +212,10 @@ class VectorDBManager:
         try:
             self._check_and_clean_inconsistent_data(index_name)
             
+            # 检查索引是否存在
+            if not self._is_schema_exist(index_name):
+                raise ValueError(f"索引 {index_name} 不存在，请先创建索引")
+            
             # 加载现有的Redis向量库
             vector_db = RedisVectorStore.from_existing_index(
                 embedding=self.embeddings,
@@ -196,9 +223,49 @@ class VectorDBManager:
                 redis_url=self.redis_url
             )
             
-            return vector_db.as_retriever(search_kwargs={"k": k})
+            # 创建向量检索器
+            vector_retriever = vector_db.as_retriever(search_kwargs={"k": k})
+            
+            # 创建混合压缩器管道
+            redundant_filter = EmbeddingsRedundantFilter(embeddings=self.base_embeddings, similarity_threshold=similarity_threshold)
+            embeddings_filter = EmbeddingsFilter(embeddings=self.base_embeddings, similarity_threshold=similarity_threshold)
+            pipeline_compressor = DocumentCompressorPipeline(
+                transformers=[redundant_filter, embeddings_filter]
+            )
+            compression_retriever = ContextualCompressionRetriever(
+                base_compressor=pipeline_compressor, base_retriever=vector_retriever
+            )
+            
+            if not use_ensemble:
+                return compression_retriever
+            else:
+                # 获取所有文档以创建BM25检索器
+                all_docs = []
+                for key in self.redis_client.keys(f"{index_name}:*"):
+                    doc_data = self.redis_client.hgetall(key)
+                    if b'text' in doc_data:
+                        content = doc_data[b'text'].decode('utf-8')
+                        metadata = {}
+                        if b'source' in doc_data:
+                            metadata['source'] = doc_data[b'source'].decode('utf-8')
+                            metadata['retriever'] = "bm25"
+
+                        all_docs.append(Document(page_content=content, metadata=metadata))
+                
+                # 创建BM25检索器
+                bm25_retriever = BM25Retriever.from_documents(all_docs)
+                bm25_retriever.k = k
+                
+                # 创建组合检索器
+                ensemble_retriever = EnsembleRetriever(
+                    retrievers=[bm25_retriever, compression_retriever],
+                    weights=[0.2, 0.8]
+                )
+                
+                return ensemble_retriever
+            
         except Exception as e:
-            raise RuntimeError(f"获取向量检索器失败: {str(e)}")
+            raise RuntimeError(f"获取检索器失败: {str(e)}")
     
     def delete_vector_db(self, index_name: str) -> None:
         """

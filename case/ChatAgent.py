@@ -14,6 +14,7 @@ from langchain_core.tools import Tool, StructuredTool, ToolException
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 from pydantic import BaseModel, Field
+from langchain_core.messages import trim_messages, filter_messages, merge_message_runs
 
 # 添加项目根目录到路径
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -72,7 +73,7 @@ def rag_tool(query: str) -> str:
     """知识库查询工具"""
     try:
         # 创建检索器并指定返回的文档数量
-        search = vectorManager.get_retriever("Test", 3)
+        search = vectorManager.get_retriever("Test", 2, 0.7, use_ensemble=True)
         # 执行相似性搜索
         docs = search.invoke(query)
         
@@ -86,6 +87,7 @@ def rag_tool(query: str) -> str:
                 f"结果{i}:\n"
                 f"内容: {doc.page_content}\n"
                 f"来源: {doc.metadata.get('source', '未知')}\n"
+                f"来源: {doc.metadata.get('retriever', 'vector')}\n"
             )
         
         return "知识库查询结果:\n" + "\n".join(results)
@@ -94,15 +96,25 @@ def rag_tool(query: str) -> str:
 
 def get_agent_history(user_id: str, session_id: str) -> RedisChatMessageHistory:
     """获取或创建Agent会话历史"""
+
     history = RedisChatMessageHistory(session_id=user_id + "-" + session_id, url=vectorManager.redis_url)
-    # 限制历史记录数量，只保留最近的20条消息
     messages = history.messages
-    if len(messages) > 20:
-        # 清空所有消息
-        history.clear()
-        # 只添加最近的20条消息
-        for message in messages[-20:]:
-            history.add_message(message)
+
+    save_messages = trim_messages(
+        messages,
+        strategy="last",
+        token_counter=len,
+        max_tokens=20,
+        start_on="human",
+        end_on=("ai", "tool"),
+        include_system=True,
+    )
+
+    history.clear()
+    for message in save_messages:
+        history.add_message(message)
+
+    print("history:\n", history)
 
     return history
 

@@ -8,8 +8,7 @@ from src.VectorDBManager import VectorDBManager
 
 # 初始化向量数据库管理器
 vectorDBManager = VectorDBManager()
-redis_client = vectorDBManager.redis_client
 
 print(vectorDBManager.load_documents_to_vector_db(os.path.join(root, "knowledge"), 'Test'))
-# print(vectorDBManager.append_documents_to_vector_db(os.path.join(root, "test"), 'Test'))
-# print(vectorDBManager.delete_vector_db('Test'))
+# print(vectorDBManager.append_documents_to_vector_db(os.path.join(root, "knowledge"), 'Test'))
+# vectorDBManager.delete_vector_db('pdf_qa_index')
