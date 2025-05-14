@@ -24,7 +24,8 @@ sys.path.append(root)
 from src.LLMConfig import get_llm_configs
 from src.LLMAgentBuilder import LLMAgentBuilder
 from src.PromptManager import SystemPromptManager
-from src.VectorDBManager import VectorDBManager
+# from src.VectorDBManager import VectorDBManager  # 常规向量存储+语义检索
+from src.ParentVectorDBManager import VectorDBManager  # 分块向量嵌入+父文本检索
 
 # ===== 配置 =====
 # 启用 LangChain 追踪
@@ -73,7 +74,7 @@ def rag_tool(query: str) -> str:
     """知识库查询工具"""
     try:
         # 创建检索器并指定返回的文档数量
-        search = vectorManager.get_retriever("Test", 2, 0.7, use_ensemble=True)
+        search = vectorManager.get_retriever("Test_ParentVectorDBManager", 2, 0.5, use_ensemble=True)
         # 执行相似性搜索
         docs = search.invoke(query)
         
@@ -193,6 +194,7 @@ async def async_stream_chat_session():
     
     # 设置用户和会话ID
     user_id = "zby"
+    # session_id = "session_1"
     session_id = "session_2"
     
     # 初始化Agent

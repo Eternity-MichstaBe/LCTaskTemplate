@@ -1,35 +1,71 @@
-from langchain_core.output_parsers import PydanticToolsParser
-from pydantic import BaseModel, Field
-from langchain.chat_models import init_chat_model
-from typing import Optional
-from typing import Union, List
-from langchain_core.tools import BaseTool, tool
-from typing import List
-from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
-from langchain_core.globals import set_llm_cache
-from langchain_core.caches import InMemoryCache
-from langchain.chat_models import init_chat_model
-from langchain_core.callbacks import UsageMetadataCallbackHandler
-from langchain_core.example_selectors.base import BaseExampleSelector
-from langchain.output_parsers import RetryOutputParser
-from langchain.output_parsers import OutputFixingParser
-import asyncio
+from langchain_community.document_loaders import TextLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_redis import RedisVectorStore
+from langchain_openai import OpenAIEmbeddings
+from langchain.retrievers import ParentDocumentRetriever
+from langchain.storage import InMemoryStore
+import json
+from langchain.schema import Document
 
-from langchain_community.document_loaders import PyPDFLoader
+# 1. 加载原始文档（父文档）
+loader = TextLoader("test.txt", encoding="utf-8")  # 换成你自己的文档路径
+documents = loader.load()
 
-from langchain_community.document_loaders import WebBaseLoader
+# 2. 定义子文档切分器（用于向量化）
+child_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=20)
 
-page_url = "https://python.langchain.com/docs/how_to/chatbots_memory/"
+# 3. 定义父文档切分器（默认不切，整个文本当作一个父文档）
+parent_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
 
-loader = WebBaseLoader(web_paths=[page_url])
-docs = []
+# 4. 初始化嵌入模型
+embeddings = OpenAIEmbeddings()  # 替换为你自己的 API key
 
-for doc in loader.lazy_load():
-    docs.append(doc)
+# 5. 创建 Redis 文档存储（用于保存父文档）
+docstore = InMemoryStore()
 
-assert len(docs) == 1
-doc = docs[0]
+# 6. 创建向量存储（用于保存子文档向量）
+# 注意：不要在初始化时传入文档，而是在 retriever.add_documents 中添加
+vectorstore = RedisVectorStore(
+    embeddings=embeddings,
+    index_name="parent_index",
+    redis_url="redis://localhost:6379/0"
+)
 
-print(f"{doc}\n")
+# 7. 创建 ParentDocumentRetriever
+retriever = ParentDocumentRetriever(
+    vectorstore=vectorstore,
+    docstore=docstore,
+    child_splitter=child_splitter,
+    parent_splitter=parent_splitter
+)
+
+# 8. 添加父文档（自动拆分、向量化子文档并存入 vectorstore）
+retriever.add_documents(documents)
+
+# 获取 store 的所有键值对
+all_data = docstore.mget(docstore.yield_keys())
+
+# 转为可序列化形式（只存文本内容）
+serializable = {
+    k: {"page_content": v.page_content, "metadata": v.metadata}
+    for k, v in zip(docstore.yield_keys(), all_data)
+}
+
+# 保存为 JSON 文件
+with open("docstore.json", "w", encoding="utf-8") as f:
+    json.dump(serializable, f, ensure_ascii=False, indent=2)
+
+
+# 加载 JSON 文件
+with open("docstore.json", "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+# 构建新 InMemoryStore
+from langchain.storage import InMemoryStore
+store = InMemoryStore()
+
+# 写入
+store.mset({
+    k: Document(page_content=v["page_content"], metadata=v["metadata"])
+    for k, v in data.items()
+})

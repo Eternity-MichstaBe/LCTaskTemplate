@@ -1,11 +1,11 @@
-import time
 import os
+import json
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader, DirectoryLoader
 from langchain_redis import RedisVectorStore
 from redis import Redis as RedisClient
-from typing import Optional, List, Union, Dict, Any
+from typing import Optional, List, Union, Dict, Any, Tuple
 from langchain.storage import LocalFileStore
 from langchain.embeddings import CacheBackedEmbeddings
 from langchain.retrievers.document_compressors import EmbeddingsFilter
@@ -13,23 +13,29 @@ from langchain.retrievers import ContextualCompressionRetriever
 from langchain_community.document_transformers import EmbeddingsRedundantFilter
 from langchain.retrievers.document_compressors import DocumentCompressorPipeline
 from langchain_community.retrievers import BM25Retriever
-from langchain.retrievers import EnsembleRetriever
+from langchain.retrievers import EnsembleRetriever, ParentDocumentRetriever
 from langchain.schema import Document
+from langchain.storage import InMemoryStore
 
 class VectorDBManager:
     """向量数据库管理器，用于管理Redis向量数据库的文档加载、检索和删除操作"""
     
-    def __init__(self, redis_url: str = "redis://localhost:6379/0", embedding_model: Optional[Any] = None):
+    def __init__(self, redis_url: str = "redis://localhost:6379/0", embedding_model: Optional[Any] = None, 
+                 chunk_size: int = 500, chunk_overlap: int = 200):
         """
         初始化向量数据库管理器
         
         Args:
             redis_url (str): Redis连接URL
             embedding_model: 嵌入模型，默认使用OpenAIEmbeddings
+            chunk_size (int): 文本块大小
+            chunk_overlap (int): 文本块重叠大小
         """
         self.redis_url = redis_url
         self.redis_client = RedisClient.from_url(redis_url, decode_responses=False)
         self.base_embeddings = embedding_model or OpenAIEmbeddings()
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
         
         # 使用绝对路径创建缓存目录
         self.cache_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache"))
@@ -72,23 +78,68 @@ class VectorDBManager:
         if keys and not schema_exists:
             self.redis_client.delete(*keys)
     
-    def _get_text_splitter(self, chunk_size: int = 1000, chunk_overlap: int = 200) -> RecursiveCharacterTextSplitter:
+    def _get_docstore_path(self, index_name: str) -> str:
         """
-        创建文本分割器
+        获取文档存储文件路径
         
         Args:
-            chunk_size (int): 文本块大小
-            chunk_overlap (int): 文本块重叠大小
+            index_name (str): 索引名称
             
         Returns:
-            RecursiveCharacterTextSplitter: 文本分割器
+            str: 文档存储文件路径
         """
-        return RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
-        )
+        return os.path.join(self.cache_dir, f"{index_name}_docstore.json")
     
-    def _load_documents(self, document_path: str, file_glob: str = "**/*.pdf") -> List[Document]:
+    def _save_docstore(self, docstore: InMemoryStore, index_name: str) -> None:
+        """
+        将文档存储保存到本地文件
+        
+        Args:
+            docstore (InMemoryStore): 文档存储
+            index_name (str): 索引名称
+        """
+        docstore_path = self._get_docstore_path(index_name)
+
+        # 获取 store 的所有键值对
+        all_data = docstore.mget(docstore.yield_keys())
+        
+        # 转为可序列化形式（只存文本内容）
+        serializable = {
+            k: {"page_content": v.page_content, "metadata": v.metadata}
+            for k, v in zip(docstore.yield_keys(), all_data)
+        }
+        
+        # 保存为 JSON 文件
+        with open(docstore_path, "w", encoding="utf-8") as f:
+            json.dump(serializable, f, ensure_ascii=False, indent=2)
+    
+    def _load_docstore(self, index_name: str) -> InMemoryStore:
+        """
+        从本地文件加载文档存储
+        
+        Args:
+            index_name (str): 索引名称
+            
+        Returns:
+            InMemoryStore: 文档存储
+        """
+        docstore_path = self._get_docstore_path(index_name)
+        docstore = InMemoryStore()
+        
+        if os.path.exists(docstore_path):
+            # 加载JSON文件
+            with open(docstore_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            # 写入docstore
+            docstore.mset({
+                k: Document(page_content=v["page_content"], metadata=v["metadata"])
+                for k, v in data.items()
+            }.items())
+        
+        return docstore
+    
+    def _load_documents(self, document_path: str, file_glob: str) -> List[Document]:
         """
         加载文档
         
@@ -110,7 +161,48 @@ class VectorDBManager:
         
         return documents
     
-    def _create_compression_retriever(self, base_retriever, similarity_threshold: float = 0.75):
+    def _get_text_splitters(self) -> Tuple[RecursiveCharacterTextSplitter, RecursiveCharacterTextSplitter]:
+        """
+        获取文本分割器
+        
+        Returns:
+            Tuple[RecursiveCharacterTextSplitter, RecursiveCharacterTextSplitter]: 父文档分割器和子文档分割器
+        """
+        parent_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=self.chunk_size * 2,
+            chunk_overlap=self.chunk_overlap
+        )
+        
+        child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap
+        )
+        
+        return parent_splitter, child_splitter
+    
+    def _create_parent_retriever(self, vectorstore, docstore, parent_splitter, child_splitter, k: int = 3) -> ParentDocumentRetriever:
+        """
+        创建父子文档检索器
+        
+        Args:
+            vectorstore: 向量存储
+            docstore: 文档存储
+            parent_splitter: 父文档分割器
+            child_splitter: 子文档分割器
+            k (int): 返回的文档数量
+            
+        Returns:
+            ParentDocumentRetriever: 父子文档检索器
+        """
+        return ParentDocumentRetriever(
+            vectorstore=vectorstore,
+            docstore=docstore,
+            child_splitter=child_splitter,
+            parent_splitter=parent_splitter,
+            search_kwargs={"k": k}
+        )
+    
+    def _create_compression_retriever(self, base_retriever, similarity_threshold: float) -> ContextualCompressionRetriever:
         """
         创建压缩检索器
         
@@ -137,32 +229,28 @@ class VectorDBManager:
             base_retriever=base_retriever
         )
     
-    def _get_all_documents(self, index_name: str) -> List[Document]:
+    def _clean_up_on_failure(self, index_name: str) -> None:
         """
-        获取索引中的所有文档
+        失败时清理资源
         
         Args:
             index_name (str): 索引名称
-            
-        Returns:
-            List[Document]: 文档列表
         """
-        all_docs = []
-        for key in self.redis_client.keys(f"{index_name}:*"):
-            doc_data = self.redis_client.hgetall(key)
-            if b'text' in doc_data:
-                content = doc_data[b'text'].decode('utf-8')
-                metadata = {}
-                if b'source' in doc_data:
-                    metadata['source'] = doc_data[b'source'].decode('utf-8')
-                    metadata['retriever'] = "bm25"
+        # 检查是否有部分键被创建但操作失败，进行清理
+        keys = self.redis_client.keys(f"{index_name}:*")
+        schema_exists = self._is_schema_exist(index_name)
 
-                all_docs.append(Document(page_content=content, metadata=metadata))
-        
-        return all_docs
+        if keys:
+            self.redis_client.delete(*keys)
+        if schema_exists:
+            self.redis_client.execute_command(f"FT.DROPINDEX {index_name} DD")
+
+        # 删除可能存在的文档存储文件
+        docstore_path = self._get_docstore_path(index_name)
+        if os.path.exists(docstore_path):
+            os.remove(docstore_path)
     
     def load_documents_to_vector_db(self, document_path: str, index_name: str, 
-                                   chunk_size: int = 1000, chunk_overlap: int = 200, 
                                    file_glob: str = "**/*.pdf") -> str:
         """
         加载文档并转换为向量存入Redis数据库
@@ -170,8 +258,6 @@ class VectorDBManager:
         Args:
             document_path (str): 文档路径
             index_name (str): 索引名称
-            chunk_size (int): 文本块大小
-            chunk_overlap (int): 文本块重叠大小
             file_glob (str): 文件匹配模式
             
         Returns:
@@ -190,45 +276,53 @@ class VectorDBManager:
             
             if not documents:
                 return "没有找到文档"
-                
-            # 文本分割
-            text_splitter = self._get_text_splitter(chunk_size, chunk_overlap)
-            chunks = text_splitter.split_documents(documents)
-                
-            # 创建Redis向量数据库
-            RedisVectorStore.from_documents(
-                documents=chunks,
+            
+            # 获取文本分割器
+            parent_splitter, child_splitter = self._get_text_splitters()
+            
+            # 创建Redis向量存储
+            vectorstore = RedisVectorStore.from_documents(
+                documents=[],  # 先创建空的向量存储
                 embedding=self.embeddings,
                 redis_url=self.redis_url,
                 index_name=index_name
             )
-                
-            return f"成功加载 {len(chunks)} 个文档块到向量数据库"
             
+            # 创建Redis文档存储
+            docstore = InMemoryStore()
+            
+            # 创建父子文档检索器
+            retriever = self._create_parent_retriever(
+                vectorstore=vectorstore,
+                docstore=docstore,
+                parent_splitter=parent_splitter,
+                child_splitter=child_splitter
+            )
+            
+            # 添加文档到检索器
+            retriever.add_documents(documents)
+            
+            # 保存文档存储到本地
+            self._save_docstore(docstore, index_name)
+            
+            return f"成功加载 {len(documents)} 个文档到向量数据库"
+                
         except Exception as e:
-            # 检查是否有部分键被创建但操作失败，进行清理
-            keys = self.redis_client.keys(f"{index_name}:*")
-            schema_exists = self._is_schema_exist(index_name)
-
-            if keys:
-                self.redis_client.delete(*keys)
-            if schema_exists:
-                self.redis_client.execute_command(f"FT.DROPINDEX {index_name} DD")
-
+            self._clean_up_on_failure(index_name)
             raise RuntimeError(f"加载文档到向量数据库失败: {str(e)}")
     
     def append_documents_to_vector_db(self, document_path: str, index_name: str, 
-                                     chunk_size: int = 1000, chunk_overlap: int = 200, 
-                                     file_glob: str = "**/*.pdf") -> None:
+                                     file_glob: str = "**/*.pdf") -> str:
         """
         追加文档到现有的向量数据库
         
         Args:
             document_path (str): 文档路径
             index_name (str): 索引名称
-            chunk_size (int): 文本块大小
-            chunk_overlap (int): 文本块重叠大小
             file_glob (str): 文件匹配模式
+            
+        Returns:
+            str: 操作结果信息
             
         Raises:
             ValueError: 当文档路径不存在或索引状态不一致时
@@ -252,23 +346,63 @@ class VectorDBManager:
             documents = self._load_documents(document_path, file_glob)
             
             if not documents:
-                return
+                return "没有找到文档"
             
-            # 文本分割
-            text_splitter = self._get_text_splitter(chunk_size, chunk_overlap)
-            chunks = text_splitter.split_documents(documents)
+            # 获取文本分割器
+            parent_splitter, child_splitter = self._get_text_splitters()
             
             # 加载现有的Redis向量库
-            vector_db = RedisVectorStore.from_existing_index(
+            vectorstore = RedisVectorStore.from_existing_index(
                 embedding=self.embeddings,
                 index_name=index_name,
                 redis_url=self.redis_url
             )
             
-            # 添加新文档
-            vector_db.add_documents(chunks)
+            # 从本地加载现有的文档存储
+            docstore = self._load_docstore(index_name)
+            
+            # 创建父子文档检索器
+            retriever = self._create_parent_retriever(
+                vectorstore=vectorstore,
+                docstore=docstore,
+                parent_splitter=parent_splitter,
+                child_splitter=child_splitter
+            )
+            
+            # 添加文档到检索器
+            retriever.add_documents(documents)
+            
+            # 保存更新后的文档存储到本地
+            self._save_docstore(docstore, index_name)
+            
+            return f"成功追加 {len(documents)} 个文档到向量数据库"
+            
         except Exception as e:
             raise RuntimeError(f"追加文档到向量数据库失败: {str(e)}")
+    
+    def _get_all_documents(self, index_name: str) -> List[Document]:
+        """
+        获取索引中的所有文档
+        
+        Args:
+            index_name (str): 索引名称
+            
+        Returns:
+            List[Document]: 文档列表
+        """
+        all_docs = []
+        for key in self.redis_client.keys(f"{index_name}:*"):
+            doc_data = self.redis_client.hgetall(key)
+            if b'text' in doc_data:
+                content = doc_data[b'text'].decode('utf-8')
+                metadata = {}
+                if b'source' in doc_data:
+                    metadata['source'] = doc_data[b'source'].decode('utf-8')
+                    metadata['retriever'] = "bm25"
+
+                all_docs.append(Document(page_content=content, metadata=metadata))
+        
+        return all_docs
     
     def get_retriever(self, index_name: str, k: int = 3, similarity_threshold: float = 0.75, use_ensemble: bool = False):
         """
@@ -294,18 +428,30 @@ class VectorDBManager:
                 raise ValueError(f"索引 {index_name} 不存在，请先创建索引")
             
             # 加载现有的Redis向量库
-            vector_db = RedisVectorStore.from_existing_index(
+            vectorstore = RedisVectorStore.from_existing_index(
                 embedding=self.embeddings,
                 index_name=index_name,
                 redis_url=self.redis_url
             )
             
-            # 创建向量检索器
-            vector_retriever = vector_db.as_retriever(search_kwargs={"k": k})
+            # 从本地加载文档存储
+            docstore = self._load_docstore(index_name)
+            
+            # 获取文本分割器
+            parent_splitter, child_splitter = self._get_text_splitters()
+            
+            # 创建父子文档检索器
+            parent_retriever = self._create_parent_retriever(
+                vectorstore=vectorstore,
+                docstore=docstore,
+                parent_splitter=parent_splitter,
+                child_splitter=child_splitter,
+                k=k
+            )
             
             # 创建压缩检索器
             compression_retriever = self._create_compression_retriever(
-                vector_retriever, 
+                parent_retriever, 
                 similarity_threshold
             )
             
@@ -330,12 +476,15 @@ class VectorDBManager:
         except Exception as e:
             raise RuntimeError(f"获取检索器失败: {str(e)}")
     
-    def delete_vector_db(self, index_name: str) -> None:
+    def delete_vector_db(self, index_name: str) -> str:
         """
         删除向量数据库
         
         Args:
             index_name (str): 索引名称
+            
+        Returns:
+            str: 操作结果信息
             
         Raises:
             RuntimeError: 当删除向量数据库失败时
@@ -350,8 +499,16 @@ class VectorDBManager:
             # 即使schema不存在，只要有相关键也执行删除
             if keys:
                 self.redis_client.delete(*keys)
-            
+                
             if schema_exists:
                 self.redis_client.execute_command(f"FT.DROPINDEX {index_name} DD")
+                
+            # 删除本地文档存储文件
+            docstore_path = self._get_docstore_path(index_name)
+            if os.path.exists(docstore_path):
+                os.remove(docstore_path)
+                
+            return f"成功删除索引 {index_name}"
+                
         except Exception as e:
             raise RuntimeError(f"删除向量数据库失败: {str(e)}")
