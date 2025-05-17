@@ -1,71 +1,109 @@
-from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_redis import RedisVectorStore
-from langchain_openai import OpenAIEmbeddings
-from langchain.retrievers import ParentDocumentRetriever
-from langchain.storage import InMemoryStore
-import json
-from langchain.schema import Document
+from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain.chains.query_constructor.schema import AttributeInfo
+from langchain.retrievers.self_query.base import SelfQueryRetriever
+from langchain.chains.query_constructor.base import (
+    StructuredQueryOutputParser,
+    get_query_constructor_prompt,
+)
+from langchain_community.query_constructors.chroma import ChromaTranslator
 
-# 1. 加载原始文档（父文档）
-loader = TextLoader("test.txt", encoding="utf-8")  # 换成你自己的文档路径
-documents = loader.load()
+# 示例文档
+docs = [
+    Document(
+        page_content="A bunch of scientists bring back dinosaurs and mayhem breaks loose",
+        metadata={"year": 1993, "rating": 7.7, "genre": "science fiction"},
+    ),
+    Document(
+        page_content="Leo DiCaprio gets lost in a dream within a dream within a dream within a ...",
+        metadata={"year": 2010, "director": "Christopher Nolan", "rating": 8.2},
+    ),
+    Document(
+        page_content="A psychologist / detective gets lost in a series of dreams within dreams within dreams and Inception reused the idea",
+        metadata={"year": 2006, "director": "Satoshi Kon", "rating": 8.6},
+    ),
+    Document(
+        page_content="A bunch of normal-sized women are supremely wholesome and some men pine after them",
+        metadata={"year": 2019, "director": "Greta Gerwig", "rating": 8.3},
+    ),
+    Document(
+        page_content="Toys come alive and have a blast doing so",
+        metadata={"year": 1995, "genre": "animated"},
+    ),
+    Document(
+        page_content="Three men walk into the Zone, three men walk out of the Zone",
+        metadata={
+            "year": 1979,
+            "director": "Andrei Tarkovsky",
+            "genre": "thriller",
+            "rating": 9.9,
+        },
+    ),
+]
 
-# 2. 定义子文档切分器（用于向量化）
-child_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=20)
+# 创建向量存储
+vectorstore = Chroma.from_documents(docs, OpenAIEmbeddings())
 
-# 3. 定义父文档切分器（默认不切，整个文本当作一个父文档）
-parent_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+# 元数据字段信息
+metadata_field_info = [
+    AttributeInfo(
+        name="genre",
+        description="The genre of the movie. One of ['science fiction', 'comedy', 'drama', 'thriller', 'romance', 'action', 'animated']",
+        type="string",
+    ),
+    AttributeInfo(
+        name="year",
+        description="The year the movie was released",
+        type="integer",
+    ),
+    AttributeInfo(
+        name="director",
+        description="The name of the movie director",
+        type="string",
+    ),
+    AttributeInfo(
+        name="rating", 
+        description="A 1-10 rating for the movie", 
+        type="float"
+    ),
+]
 
-# 4. 初始化嵌入模型
-embeddings = OpenAIEmbeddings()  # 替换为你自己的 API key
+# 文档内容描述
+document_content_description = "Brief summary of a movie"
+llm = ChatOpenAI(temperature=0)
 
-# 5. 创建 Redis 文档存储（用于保存父文档）
-docstore = InMemoryStore()
-
-# 6. 创建向量存储（用于保存子文档向量）
-# 注意：不要在初始化时传入文档，而是在 retriever.add_documents 中添加
-vectorstore = RedisVectorStore(
-    embeddings=embeddings,
-    index_name="parent_index",
-    redis_url="redis://localhost:6379/0"
+# 方法1：使用简化的SelfQueryRetriever构造方法
+retriever = SelfQueryRetriever.from_llm(
+    llm,
+    vectorstore,
+    document_content_description,
+    metadata_field_info,
 )
 
-# 7. 创建 ParentDocumentRetriever
-retriever = ParentDocumentRetriever(
+# 测试简单过滤查询
+# print(retriever.invoke("I want to watch a movie rated higher than 8.5"))
+
+# 测试结合内容和过滤条件的查询
+# print(retriever.invoke("Has Greta Gerwig directed any movies about women"))
+
+# 方法2：使用更灵活的构造方法
+# 创建查询构造器
+prompt = get_query_constructor_prompt(
+    document_content_description,
+    metadata_field_info,
+)
+output_parser = StructuredQueryOutputParser.from_components()
+query_constructor = prompt | llm | output_parser
+
+# 创建检索器
+retriever = SelfQueryRetriever(
+    query_constructor=query_constructor,
     vectorstore=vectorstore,
-    docstore=docstore,
-    child_splitter=child_splitter,
-    parent_splitter=parent_splitter
+    structured_query_translator=ChromaTranslator(),
 )
 
-# 8. 添加父文档（自动拆分、向量化子文档并存入 vectorstore）
-retriever.add_documents(documents)
-
-# 获取 store 的所有键值对
-all_data = docstore.mget(docstore.yield_keys())
-
-# 转为可序列化形式（只存文本内容）
-serializable = {
-    k: {"page_content": v.page_content, "metadata": v.metadata}
-    for k, v in zip(docstore.yield_keys(), all_data)
-}
-
-# 保存为 JSON 文件
-with open("docstore.json", "w", encoding="utf-8") as f:
-    json.dump(serializable, f, ensure_ascii=False, indent=2)
-
-
-# 加载 JSON 文件
-with open("docstore.json", "r", encoding="utf-8") as f:
-    data = json.load(f)
-
-# 构建新 InMemoryStore
-from langchain.storage import InMemoryStore
-store = InMemoryStore()
-
-# 写入
-store.mset({
-    k: Document(page_content=v["page_content"], metadata=v["metadata"])
-    for k, v in data.items()
-})
+# 测试复杂查询
+print(retriever.invoke(
+    "What's a movie after 1990 but before 2005 that's all about toys, and preferably is animated"
+))

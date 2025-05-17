@@ -463,12 +463,12 @@ class VectorDBManager:
                 
                 # 创建BM25检索器
                 bm25_retriever = BM25Retriever.from_documents(all_docs)
-                bm25_retriever.k = k
+                bm25_retriever.k = 1
                 
                 # 创建组合检索器
                 ensemble_retriever = EnsembleRetriever(
                     retrievers=[bm25_retriever, compression_retriever],
-                    weights=[0.2, 0.8]
+                    weights=[0.1, 0.9]
                 )
                 
                 return ensemble_retriever

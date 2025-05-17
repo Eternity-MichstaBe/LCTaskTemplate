@@ -7,6 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnablePassthrough
+from langchain_core.callbacks import BaseCallbackHandler, CallbackManagerForToolRun, CallbackManager
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -80,23 +81,23 @@ class LLMAgentBuilder:
         """获取所有工具的描述文本"""
         return "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
     
-    def create_agent_executor(self, verbose: bool = True) -> AgentExecutor:
+    def create_agent_executor(self, verbose: bool = True, callback_manager: CallbackManager = None) -> AgentExecutor:
         """创建Agent执行器"""
         llm = self.get_agent_llm()
         prompt = self.get_agent_prompt()
         tools = self.get_agent_tools()
         
         agent = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
-        self.agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=verbose)
+        self.agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=verbose, callback_manager=callback_manager)
         return self.agent_executor
     
-    def create_multimodal_agent_executor(self, verbose: bool = True) -> AgentExecutor:
+    def create_multimodal_agent_executor(self, verbose: bool = True, callback_manager: CallbackManager = None) -> AgentExecutor:
         """创建多模态Agent执行器"""
         llm = self.get_agent_llm()
         prompt = self.get_multimodal_agent_prompt()
         tools = self.get_agent_tools()
         
         agent = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
-        self.agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=verbose)
+        self.agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=verbose, callback_manager=callback_manager)
         return self.agent_executor
 
