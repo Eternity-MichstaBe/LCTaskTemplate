@@ -5,8 +5,6 @@ Redis历史存储
 import os
 import sys
 import asyncio
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.runnables import ConfigurableFieldSpec
 from langchain_core.output_parsers import StrOutputParser
@@ -16,10 +14,10 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.LLMChainBuilder import LLMChainBuilder
-from src.LLMConfig import get_llm_configs
-from src.LLMAgentBuilder import LLMAgentBuilder
-from src.PromptManager import SystemPromptManager
+from src.llm.LLMChainBuilder import LLMChainBuilder
+from src.llm.LLMConfig import get_llm_configs
+from src.llm.LLMAgentBuilder import LLMAgentBuilder
+from src.llm.PromptManager import SystemPromptManager
 from example.examples import examples
 
 # 定义工具函数

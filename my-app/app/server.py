@@ -6,8 +6,8 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.LLMConfig import get_llm_configs
-from src.LLMChainBuilder import LLMChainBuilder
+from src.llm.LLMConfig import get_llm_configs
+from src.llm.LLMChainBuilder import LLMChainBuilder
 
 app = FastAPI(
     title="LangChain服务器",

@@ -2,11 +2,6 @@
 多模态agent测试
 """
 
-import os
-import sys
-from langchain_core.tools import Tool, StructuredTool
-from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain.globals import set_debug, set_verbose
 import httpx
 import base64
 import os
@@ -16,13 +11,12 @@ from langchain_core.runnables import ConfigurableFieldSpec
 from langchain_core.tools import Tool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_community.chat_message_histories import RedisChatMessageHistory
-from langchain_core.messages import HumanMessage 
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.LLMConfig import get_llm_configs
-from src.PromptManager import SystemPromptManager
-from src.LLMAgentBuilder import LLMAgentBuilder
+from src.llm.LLMConfig import get_llm_configs
+from src.llm.PromptManager import SystemPromptManager
+from src.llm.LLMAgentBuilder import LLMAgentBuilder
 
 # 启用 LangChain 追踪
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
