@@ -92,3 +92,22 @@ class LLMChainBuilder:
             is_memory=config.memory
         )
         return self._create_chain(config, prompt)
+    
+    def create_multimodal_chat_chain(self, config: LLMConfig) -> RunnableParallel:
+        """创建多模态聊天处理链"""
+        prompt = PromptBuilder.create_multimodal_chat_prompt_template(
+            system_prompt=config.system_prompt,
+            is_agent=config.agent,
+            is_memory=config.memory
+        )
+        return self._create_chain(config, prompt)
+    
+    def create_few_shot_multimodal_chat_chain(self, config: LLMConfig) -> RunnableParallel:
+        """创建少样本多模态聊天处理链"""
+        prompt = PromptBuilder.create_few_shot_multimodal_chat_prompt_template(
+            system_prompt=config.system_prompt,
+            examples=config.examples,
+            is_agent=config.agent,
+            is_memory=config.memory
+        )
+        return self._create_chain(config, prompt)
