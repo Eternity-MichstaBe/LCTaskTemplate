@@ -37,6 +37,7 @@ class LLMConfig:
     temperature: float
     api_key: Optional[str] = None
     api_base: Optional[str] = None
+    streaming: bool = False
     system_prompt: str = ""
     examples: List[Dict[str, str]] = None
     local: bool = False
@@ -54,6 +55,7 @@ def get_llm_configs(**kwargs) -> LLMConfig:
         temperature=kwargs.get("temperature", 0.2),
         api_key=kwargs.get("api_key", config_loader.get_config("openai", "api_key")),
         api_base=kwargs.get("api_base", config_loader.get_config("openai", "api_base")),
+        streaming=kwargs.get("streaming", False),
         system_prompt=kwargs.get("system_prompt", ""),
         examples=kwargs.get("examples", []),
         local=kwargs.get("local", False),

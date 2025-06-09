@@ -24,11 +24,13 @@ class LLMChainBuilder:
                     temperature=config.temperature,
                     model_name=config.model_name,
                     openai_api_key=config.api_key,
-                    openai_api_base=config.api_base
+                    openai_api_base=config.api_base,
+                    streaming=config.streaming
                 )
             return ChatOllama(
                 model=config.model_name,
-                temperature=config.temperature
+                temperature=config.temperature,
+                streaming=config.streaming
             )
         except Exception as e:
             raise RuntimeError(f"Failed to initialize chat model: {str(e)}")
