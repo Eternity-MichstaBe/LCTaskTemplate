@@ -3,9 +3,11 @@ import os
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+
 def encode_image_to_base64(image_path):
     with open(image_path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
+
 
 examples = [
     {
@@ -22,7 +24,8 @@ examples = [
     },
 ]
 
-multimodel_examples = [
+
+multi_model_examples = [
     {
         "question": "这张图片里有什么？",
         "image_data": encode_image_to_base64(os.path.join(root, "test/dog.jpg")),

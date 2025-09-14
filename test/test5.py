@@ -120,6 +120,7 @@ def encode_image_to_base64(image_path):
     with open(image_path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
 
+
 image_url_ = "https://th.bing.com/th/id/OIP.koy6VQmYMo9tMjDWe9xvQwHaE8?rs=1&pid=ImgDetMain"
 image_data_ = base64.b64encode(httpx.get(image_url_).content).decode("utf-8")
 

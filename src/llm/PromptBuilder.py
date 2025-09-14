@@ -1,4 +1,5 @@
-from typing import List, Dict, Any, Optional, Tuple, Union
+import os
+from typing import List, Dict, Any, Optional
 from langchain_core.prompts import (
     ChatPromptTemplate,
     FewShotPromptTemplate,
@@ -8,7 +9,7 @@ from langchain_core.prompts import (
 )
 from langchain.prompts.example_selector import SemanticSimilarityExampleSelector
 from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings
+from src.embed.SiliconFlowEmbeddings import SiliconFlowEmbeddings
 
 
 class PromptBuilder:
@@ -93,7 +94,7 @@ class PromptBuilder:
 
         example_selector = SemanticSimilarityExampleSelector.from_examples(
             examples=examples,
-            embeddings=OpenAIEmbeddings(),
+            embeddings=SiliconFlowEmbeddings(os.getenv("SF_API_KEY", "")),
             vectorstore_cls=Chroma,
             k=example_num
         )
@@ -230,7 +231,7 @@ class PromptBuilder:
         example_selector = SemanticSimilarityExampleSelector(
             vectorstore=Chroma.from_texts(
                 [ex["question"] for ex in examples],
-                embedding=OpenAIEmbeddings(),
+                embedding=SiliconFlowEmbeddings(os.getenv("SF_API_KEY", "")),
                 metadatas=examples
             ),
             k=example_num

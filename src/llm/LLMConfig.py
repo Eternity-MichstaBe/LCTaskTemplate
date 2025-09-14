@@ -1,33 +1,13 @@
-import configparser
 import os
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+import sys
+import configparser
+from dataclasses import dataclass
+from typing import Optional, List, Dict
 from langchain_core.output_parsers import BaseOutputParser
 
-
-class ConfigLoader:
-    """配置加载器"""
-    _instance = None
-    _config = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(ConfigLoader, cls).__new__(cls)
-            # 获取当前文件所在目录的绝对路径
-            root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            # 获取配置文件的绝对路径
-            config_path = os.path.join(os.path.dirname(root_dir), 'config', 'config.ini')
-
-            cls._config = configparser.ConfigParser()
-            cls._config.read(config_path)
-        return cls._instance
-
-    @classmethod
-    def get_config(cls, section: str, key: str) -> str:
-        """获取配置项"""
-        if cls._config is None:
-            cls()
-        return cls._config.get(section, key, fallback="")
+# 添加项目根目录到路径
+root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(root)
 
 
 @dataclass
@@ -36,7 +16,7 @@ class LLMConfig:
     model_name: str
     temperature: float
     api_key: Optional[str] = None
-    api_base: Optional[str] = None
+    base_url: Optional[str] = None
     streaming: bool = False
     system_prompt: str = ""
     examples: List[Dict[str, str]] = None
@@ -48,13 +28,12 @@ class LLMConfig:
 
 def get_llm_configs(**kwargs) -> LLMConfig:
     """获取LLM配置"""
-    config_loader = ConfigLoader()
 
     return LLMConfig(
-        model_name=kwargs.get("model_name", "gpt-4o"),
+        model_name=kwargs.get("model_name", ""),
         temperature=kwargs.get("temperature", 0.2),
-        api_key=kwargs.get("api_key", config_loader.get_config("openai", "api_key")),
-        api_base=kwargs.get("api_base", config_loader.get_config("openai", "api_base")),
+        api_key=kwargs.get("api_key", None),
+        base_url=kwargs.get("base_url", None),
         streaming=kwargs.get("streaming", False),
         system_prompt=kwargs.get("system_prompt", ""),
         examples=kwargs.get("examples", []),
@@ -63,3 +42,9 @@ def get_llm_configs(**kwargs) -> LLMConfig:
         agent=kwargs.get("agent", False),
         memory=kwargs.get("memory", False)
     )
+
+
+cfg = configparser.ConfigParser(
+    interpolation=configparser.ExtendedInterpolation()  # 支持 ${section:key} 插值
+)
+cfg.read(os.path.join(root, "config", "config.ini"), encoding="utf-8")

@@ -23,8 +23,8 @@ class LLMChainBuilder:
                 return ChatOpenAI(
                     temperature=config.temperature,
                     model_name=config.model_name,
-                    openai_api_key=config.api_key,
-                    openai_api_base=config.api_base,
+                    api_key=config.api_key,
+                    base_url=config.base_url,
                     streaming=config.streaming
                 )
             return ChatOllama(
